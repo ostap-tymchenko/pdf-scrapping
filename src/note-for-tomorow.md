@@ -1,7 +1,5 @@
 things to do:
 
-- redo id system
-    - decide weather to do checks
 - write down dependencies in readme
 - make a plan for in/out
 - whiteboard general plan

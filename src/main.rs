@@ -1,9 +1,8 @@
 use rusty_tesseract::{Image, Args};      // ocr
-use std::{time::{SystemTime, UNIX_EPOCH}, fs}; // time
+use std::{fs}; 
 use chrono::Local;                       // time
 use std::process::Command;               // pdf to img
 use rand::Rng;                           // rand
-use std::path::Path;                     // checking if path exists
 
 fn image_to_text(image_path: String) -> String {
     dbg!(&image_path);
@@ -40,7 +39,7 @@ fn pdf_to_image(input_pdf: String) -> String {
     let id = generate_id(pdf_name);
 
     let path = format!("../in_or_out/png/{id}");
-    fs::create_dir_all(&path);
+    fs::create_dir_all(&path).expect("cant create png dir");
     let output = path.clone() + "/" + pdf_name;
     // let output = format!("../in_or_out/png/{id}/{pdf_name}");
 
@@ -59,9 +58,60 @@ fn pdf_to_image(input_pdf: String) -> String {
     path
 }
 
+// fn str_to_seg<'a>(segment: &'a str, substring: &'a str, split_by: char) -> &'a str {
+//     segment.split(split_by).into_iter().find(|x| x.find(substring).is_some()).unwrap_or("NOT FOUND")
+//     // takes a string and returns a specific substring based on a substring of the substring
+//     // eg: (segment:"Sales tax: @8.875%", substring: "@", split_by: ' ') -> "@8.875"
+// }
+
+fn does_seg_have_all(segment: &str, substring:&[&str] ) -> bool {
+    for s in substring.iter(){
+        if !segment.find(s).is_some() {
+            return false;
+        } 
+    } 
+
+    true
+}
+
+enum Utility {
+    Coned,
+    Agressive,
+    DirectEnergy,
+}
+
+enum SuplierOrUtility {
+    Suplier,
+    Utility,
+}
+
+enum Comodity {
+    NG,
+    Elec,
+}
+
+struct AccountNum(String);
+
+struct DTHDataSetup {
+    utility: Utility,
+    suplier_or_utility: SuplierOrUtility,
+    comodity: Comodity,
+    account_num: AccountNum,
+}
+
 fn main () {
-    // pdf_to_image(String::from("../in_or_out/pdf/non-client-coned-bill.pdf"));
-    let test_input_pdf_1 = String::from("../in_or_out/pdf/non-client-coned-bill.pdf");
-    let a = folder_image_to_text(pdf_to_image(test_input_pdf_1));
-    dbg!(a);
+    let coned_example_bill = String::from("../in_or_out/pdf/ConedExampleBill.pdf");
+
+    for pages in folder_image_to_text(pdf_to_image(coned_example_bill)) {
+        for segment in pages.lines() {
+            if does_seg_have_all(segment, &["@", "%"]) {
+                // println!("{}", segment);
+            }
+
+            if does_seg_have_all(segment, &["Your account number: "]) {
+                // println!("{}", segment);
+            }
+            println!("{segment}");
+        } 
+    }
 }
