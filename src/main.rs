@@ -1,117 +1,127 @@
-use rusty_tesseract::{Image, Args};      // ocr
-use std::{fs}; 
-use chrono::Local;                       // time
-use std::process::Command;               // pdf to img
-use rand::Rng;                           // rand
+use color_eyre::eyre::Result;
+use pdfium_render::prelude::*;
+use rusty_tesseract::{Args, Image};
+use std::{
+    fs::{self},
+    path::Path,
+};
 
-fn image_to_text(image_path: String) -> String {
-    dbg!(&image_path);
+fn pdf_to_text(pdf_path: &Path) -> String {
+    let mut r = String::new();
+
+    println!("{}", &pdf_path.display());
+    Pdfium::new(
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")).unwrap(),
+    )
+    .load_pdf_from_file(pdf_path, None)
+    .unwrap()
+    .pages()
+    .iter()
+    .for_each(|page| r.push_str(&page.text().unwrap().all()));
+
+    r
+}
+
+fn get_name(path: &Path) -> &str {
+    path.file_name()
+        .expect("Couldnt find this file")
+        .to_str()
+        .expect("failed OsStr -> str")
+}
+
+// fn path_to_string(path: &Path) -> String {
+//     path.display().to_string()
+// }
+
+fn cached_pdf_to_text(pdf_path: &Path) -> String {
+    let name = get_name(pdf_path);
+
+    // this will be the path where cached txt files will live
+    let binding = "../percistant_cache/".to_owned() + name + ".txt";
+    let cache_path = Path::new(&binding);
+
+    if cache_path.exists() {
+        // path_to_string(cache_path)
+        // println!("read cache");
+        // cache_path
+        fs::read_to_string(cache_path).expect("Cant find cache")
+    } else {
+        // println!("created cache");
+        fs::create_dir_all("../percistant_cache/").unwrap();
+        let converted = pdf_to_text(pdf_path);
+        fs::write(cache_path, &converted).unwrap();
+        converted.clone()
+    }
+}
+
+fn export_pdf_to_jpegs(path: &Path, password: Option<&str>) -> Result<(), PdfiumError> {
+    // Renders each page in the PDF file at the given path to a separate JPEG file.
+
+    // Bind to a Pdfium library in the same directory as our Rust executable;
+    // failing that, fall back to using a Pdfium library provided by the operating system.
+
+    let pdfium = Pdfium::new(
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+            .or_else(|_| Pdfium::bind_to_system_library())?,
+    );
+
+    // Load the document from the given path...
+
+    let document = pdfium.load_pdf_from_file(path, password)?;
+
+    // ... set rendering options that will be applied to all pages...
+
+    let render_config = PdfRenderConfig::new()
+        .set_target_width(2000)
+        .set_maximum_height(2000)
+        .rotate_if_landscape(PdfPageRenderRotation::Degrees90, true);
+
+    // ... then render each page to a bitmap image, saving each image to a JPEG file.
+
+    for (index, page) in document.pages().iter().enumerate() {
+        page.render_with_config(&render_config)?
+            .as_image() // Renders this page to an image::DynamicImage...
+            .as_rgba8() // ... then converts it to an image::Image...
+            .ok_or(PdfiumError::ImageError)?
+            .save_with_format(format!("../ocr_renders/{}.jpg", index), image::ImageFormat::Jpeg) // ... and saves it to a file.
+            .map_err(|_| PdfiumError::ImageError)?;
+    }
+
+    Ok(())
+}
+
+fn ocr(image_path: &Path) -> String {
     let input_image = Image::from_path(image_path).unwrap();
     let output = rusty_tesseract::image_to_string(&input_image, &Args::default()).unwrap();
     output.to_string()
 }
 
-fn folder_image_to_text(folder_path: String) -> Vec<String> {
-    let dir = fs::read_dir(folder_path).unwrap();
-    let mut output: Vec<String> = Vec::new();
+fn pdf_to_text_ocr(pdf: &Path) -> String {
+     export_pdf_to_jpegs(pdf, None);
+     ocr(image_path)
+}
 
-    for image in dir {
-        // dbg!(image);
-        output.push(image_to_text(image.unwrap().path().into_os_string().into_string().unwrap()))
+fn main() -> Result<()> {
+    color_eyre::install()?;
+
+    let folder = Path::new("../privet/coned/");
+
+    for pdf in fs::read_dir(folder)? {
+        let pdf_path = &pdf?.path();
+        let name = get_name(&pdf_path);
+        let a = cached_pdf_to_text(&pdf_path);
+
+        if a.contains("@8.8750%") {
+            println!("8.875%");
+        } else if a.contains("@4.5000%") {
+            println!("4.475%");
+        } else {
+            println!("cant find %, attempting ocr");
+        }
     }
 
-    output
-}
+    // let ind = cached_pdf_to_text(Path::new("../privet/all/Aggressive - Gas - Sep 2021.pdf")); // -> String
+    // dbg!(ind);
 
-fn generate_id(name: &str) -> String {
-    // let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    let date = Local::now();
-    let timestamp = format!("{}", date.format("%Y-%m-%d-%H:%M:%S"));
-
-    let random = rand::thread_rng().gen_range(10000..999999999); 
-    let id = String::from(format!("{}-rand-{}-{}", timestamp, random, name));
-
-    id
-}
-
-fn pdf_to_image(input_pdf: String) -> String {
-    let pdf_name = input_pdf.split('/').last().unwrap().split('.').nth(0).unwrap();
-    let id = generate_id(pdf_name);
-
-    let path = format!("../in_or_out/png/{id}");
-    fs::create_dir_all(&path).expect("cant create png dir");
-    let output = path.clone() + "/" + pdf_name;
-    // let output = format!("../in_or_out/png/{id}/{pdf_name}");
-
-    let run_command_output = Command::new("pdftoppm")
-        .args(&["-png", "-r", "300", &input_pdf, &output])
-        .output()
-        .expect("Failed to execute pdftoppm");
-
-    if run_command_output.status.success() {
-        println!("PDF {} converted to image(/s) successfully!", pdf_name);
-    } else {
-        let error_message = String::from_utf8_lossy(&run_command_output.stderr);
-        println!("Error converting PDF {pdf_name} image: {error_message}");
-    }
-
-    path
-}
-
-// fn str_to_seg<'a>(segment: &'a str, substring: &'a str, split_by: char) -> &'a str {
-//     segment.split(split_by).into_iter().find(|x| x.find(substring).is_some()).unwrap_or("NOT FOUND")
-//     // takes a string and returns a specific substring based on a substring of the substring
-//     // eg: (segment:"Sales tax: @8.875%", substring: "@", split_by: ' ') -> "@8.875"
-// }
-
-fn does_seg_have_all(segment: &str, substring:&[&str] ) -> bool {
-    for s in substring.iter(){
-        if !segment.find(s).is_some() {
-            return false;
-        } 
-    } 
-
-    true
-}
-
-enum Utility {
-    Coned,
-    Agressive,
-    DirectEnergy,
-}
-
-enum SuplierOrUtility {
-    Suplier,
-    Utility,
-}
-
-enum Comodity {
-    NG,
-    Elec,
-}
-
-struct AccountNum(String);
-
-struct DTHDataSetup {
-    utility: Utility,
-    suplier_or_utility: SuplierOrUtility,
-    comodity: Comodity,
-    account_num: AccountNum,
-}
-
-fn main () {
-    let coned_example_bill = String::from("../in_or_out/pdf/ConedExampleBill.pdf");
-
-    for pages in folder_image_to_text(pdf_to_image(coned_example_bill)) {
-        for segment in pages.lines() {
-            if does_seg_have_all(segment, &["@", "%"]) {
-                // println!("{}", segment);
-            }
-
-            if does_seg_have_all(segment, &["Your account number: "]) {
-                // println!("{}", segment);
-            }
-            println!("{segment}");
-        } 
-    }
+    Ok(())
 }
